@@ -1,56 +1,54 @@
 from collections import defaultdict
-from typing import Iterable, List, Dict
-
+from typing import List
 from library.models import Library, LibraryBook
 from .move import Move
 
 
 class RedistributionManager:
     """
-    Базовый перераспределитель:
-    - высчитывает target_load пропорционально capacity
-    - переносит книги до стабилизации
-    - НЕ учитывает capacity (это делает CapacityAwareRedistributionManager)
+    Базовый распределитель.
+    Выполняет перераспределение, опираясь только на target_load.
+    Может быть расширен за счёт переопределения нескольких методов.
     """
 
-    def __init__(self, libraries: Iterable[Library], inventory: Iterable[LibraryBook]):
-        # Сохраняем библиотеки в словарь по ID
-        self.libraries: Dict[int, Library] = {lib.id: lib for lib in libraries}
+    def __init__(self, libraries, inventory):
+        self.libraries = {lib.id: lib for lib in libraries}
+        self.inventory = list(inventory)
 
-        # Инвентарь
-        self.inventory: List[LibraryBook] = list(inventory)
+        self.load = defaultdict(int)
+        self.books_by_library = defaultdict(list)
 
-        # Счётчики книг
-        self.load = defaultdict(int)  # сколько книг в библиотеке
-        self.books_by_library = defaultdict(list)  # список книг в библиотеке
-
-        # Заполняем load + books_by_library
         for lb in self.inventory:
             self.load[lb.library_id] += 1
             self.books_by_library[lb.library_id].append(lb.book)
 
-        # Общие показатели
         self.total_books = sum(self.load.values())
         self.total_capacity = sum(lib.capacity for lib in libraries)
 
-        # Целевое распределение по формуле:
-        #   target_load = round( total_books * capacity / total_capacity )
         self.target_load = {
             lib.id: round(self.total_books * lib.capacity / self.total_capacity)
             for lib in self.libraries.values()
         }
 
+    # Методы для наследников
+
+    def can_receive(self, library_id: int) -> bool:
+        """Можно ли принять книгу? Базовая версия разрешает всё."""
+        return True
+
+    def on_move_planned(self, donor_id: int, receiver_id: int):
+        """Хук, вызываемый при планировании переноса. Базовая версия пустая."""
+        pass
+
+    def pick_book(self, donor_id: int):
+        """Какую книгу донор отдаёт? Базовая версия — последнюю."""
+        return self.books_by_library[donor_id].pop()
+
+    # Распределение
     def rebalance(self) -> List[Move]:
-        """
-        Полное перераспределение до стабилизации.
-        НЕ проверяет свободное место — только чистая пропорциональность.
-        """
-        moves: List[Move] = []
+        moves = []
 
-        # Выполняем, пока можно что-то перенести
         while True:
-
-            # Доноры: у кого load > target
             donors = sorted(
                 [
                     lib
@@ -61,7 +59,6 @@ class RedistributionManager:
                 reverse=True,
             )
 
-            # Реципиенты: у кого load < target
             receivers = sorted(
                 [
                     lib
@@ -72,49 +69,48 @@ class RedistributionManager:
                 reverse=True,
             )
 
-            # Если никто не нуждается в перераспределении → закончили
             if not donors or not receivers:
                 break
 
-            progress = False  # флаг для выхода, если ничего не поменялось
+            progress = False
 
-            # Основной цикл перераспределения
             for donor in donors:
                 for receiver in receivers:
 
-                    # донор уже дал достаточно
-                    if self.load[donor.id] <= self.target_load[donor.id]:
+                    donor_id = donor.id
+                    receiver_id = receiver.id
+
+                    if self.load[donor_id] <= self.target_load[donor_id]:
                         break
 
-                    # реципиент уже получил достаточно
-                    if self.load[receiver.id] >= self.target_load[receiver.id]:
+                    if self.load[receiver_id] >= self.target_load[receiver_id]:
                         continue
 
-                    # у донора может не остаться книг
-                    if not self.books_by_library[donor.id]:
+                    if not self.books_by_library[donor_id]:
                         continue
 
-                    # Берём книгу
-                    book = self.books_by_library[donor.id].pop()
+                    if not self.can_receive(receiver_id):
+                        continue
 
-                    # Обновление нагрузки
-                    self.load[donor.id] -= 1
-                    self.load[receiver.id] += 1
-                    self.books_by_library[receiver.id].append(book)
+                    book = self.pick_book(donor_id)
 
-                    # Регистрируем перемещение
+                    self.load[donor_id] -= 1
+                    self.load[receiver_id] += 1
+                    self.books_by_library[receiver_id].append(book)
+
+                    self.on_move_planned(donor_id, receiver_id)
+
                     moves.append(
                         Move(
                             book_id=book.id,
-                            from_library_id=donor.id,
-                            to_library_id=receiver.id,
+                            from_library_id=donor_id,
+                            to_library_id=receiver_id,
                             quantity=1,
                         )
                     )
 
                     progress = True
 
-            # Если на этом проходе ничего не перенесли → баланс достигнут
             if not progress:
                 break
 

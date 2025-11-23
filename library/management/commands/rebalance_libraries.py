@@ -67,6 +67,4 @@ class Command(BaseCommand):
         # Вывод состояния ПОСЛЕ
         self._print_state(libraries, load_after, "ПОСЛЕ перераспределения")
 
-        self.stdout.write(
-            self.style.SUCCESS("\nПерераспределение завершено (вариант A).")
-        )
+        self.stdout.write(self.style.SUCCESS("\nПерераспределение завершено."))
