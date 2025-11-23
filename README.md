@@ -11,7 +11,7 @@
 ## 1. Клонирование репозитория
 
 ``` bash
-git clone https://github.com/<your_username>/city_library.git
+git clone https://github.com/miron42/city_library.git
 cd city_library
 ```
 
